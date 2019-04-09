@@ -12,44 +12,6 @@ pipeline {
   }
 
   stages {
-    stage ("Print Info") {
-      steps {
-        echo "PR: ${env.CHANGE_ID} - ${env.CHANGE_TITLE}"
-        echo "CHANGE_AUTHOR_EMAIL: ${env.CHANGE_AUTHOR_EMAIL}"
-        echo "CHANGE_AUTHOR: ${env.CHANGE_AUTHOR}"
-        echo "CHANGE_AUTHOR_DISPLAY_NAME: ${env.CHANGE_AUTHOR_DISPLAY_NAME}"
-        echo "building on node ${env.NODE_NAME}"
-      }
-    }
-
-    stage ("Check Permissions") {
-      when {
-        allOf {
-          not {branch 'master'}
-          not {changeRequest authorEmail: "rene.gassmoeller@mailbox.org"}
-          not {changeRequest authorEmail: "timo.heister@gmail.com"}
-          not {changeRequest authorEmail: "bangerth@colostate.edu"}
-          not {changeRequest authorEmail: "judannberg@gmail.com"}
-          not {changeRequest authorEmail: "ja3170@columbia.edu"}
-          not {changeRequest authorEmail: "jbnaliboff@ucdavis.edu"}
-          not {changeRequest authorEmail: "menno.fraters@outlook.com"}
-          not {changeRequest authorEmail: "a.c.glerum@uu.nl"}
-        }
-      }
-
-      steps {
-        // For /rebuild to work you need to:
-        // 1) select "issue comment" to be delivered in the github webhook setting
-        // 2) install "GitHub PR Comment Build Plugin" on Jenkins
-        // 3) in project settings select "add property" "Trigger build on pr comment" with
-        //    the phrase ".*/rebuild.*" (without quotes)
-        sh '''
-          wget -q -O - https://api.github.com/repos/geodynamics/aspect/issues/${CHANGE_ID}/labels | grep 'ready to test' || \
-          { echo "This commit will only be tested when it has the label 'ready to test'. Trigger a rebuild by adding a comment that contains '/rebuild'..."; exit 1; }
-        '''
-      }
-    }
-
     stage('Check Indentation') {
       steps {
         sh './doc/indent'
