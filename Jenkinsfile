@@ -3,20 +3,16 @@
 pipeline {
   agent {
     docker {
-        image 'dealii/dealii:v8.5.1-gcc-mpi-fulldepscandi-debugrelease'
-	// We mount /repos into the docker image. This allows us to cache
-	// the git repo by setting "advanced clone behaviors". If the
-	// directory does not exist, this will be ignored.
-	args '-v /repos:/repos:ro'
+      image 'dealii/dealii:v8.5.1-gcc-mpi-fulldepscandi-debugrelease'
     }
   }
 
   options {
-    timeout(time: 2, unit: 'HOURS') 
+    timeout(time: 2, unit: 'HOURS')
   }
 
   stages {
-    stage ("info") {
+    stage ("Print Info") {
       steps {
         echo "PR: ${env.CHANGE_ID} - ${env.CHANGE_TITLE}"
         echo "CHANGE_AUTHOR_EMAIL: ${env.CHANGE_AUTHOR_EMAIL}"
@@ -26,20 +22,21 @@ pipeline {
       }
     }
 
-    stage ("Check permissions") {
+    stage ("Check Permissions") {
       when {
-	allOf {
-            not {branch 'master'}
-            not {changeRequest authorEmail: "rene.gassmoeller@mailbox.org"}
-            not {changeRequest authorEmail: "timo.heister@gmail.com"}
-            not {changeRequest authorEmail: "bangerth@colostate.edu"}
-            not {changeRequest authorEmail: "judannberg@gmail.com"}
-            not {changeRequest authorEmail: "ja3170@columbia.edu"}
-            not {changeRequest authorEmail: "jbnaliboff@ucdavis.edu"}
-            not {changeRequest authorEmail: "menno.fraters@outlook.com"}
-            not {changeRequest authorEmail: "a.c.glerum@uu.nl"}
-	    }
+        allOf {
+          not {branch 'master'}
+          not {changeRequest authorEmail: "rene.gassmoeller@mailbox.org"}
+          not {changeRequest authorEmail: "timo.heister@gmail.com"}
+          not {changeRequest authorEmail: "bangerth@colostate.edu"}
+          not {changeRequest authorEmail: "judannberg@gmail.com"}
+          not {changeRequest authorEmail: "ja3170@columbia.edu"}
+          not {changeRequest authorEmail: "jbnaliboff@ucdavis.edu"}
+          not {changeRequest authorEmail: "menno.fraters@outlook.com"}
+          not {changeRequest authorEmail: "a.c.glerum@uu.nl"}
+        }
       }
+
       steps {
         // For /rebuild to work you need to:
         // 1) select "issue comment" to be delivered in the github webhook setting
@@ -53,67 +50,105 @@ pipeline {
       }
     }
 
-    stage('Check indentation') {
+    stage('Check Indentation') {
       steps {
         sh './doc/indent'
         sh 'git diff > changes-astyle.diff'
         archiveArtifacts artifacts: 'changes-astyle.diff', fingerprint: true
         sh '''
-	  git diff --exit-code || \
-	  { echo "Please check indentation, see artifacts in the top right corner!"; exit 1; }
-	  '''
-        }
+          git diff --exit-code || \
+          { echo "Please check indentation, see artifacts in the top right corner!"; exit 1; }
+        '''
+      }
     }
 
     stage('Build') {
-      options {timeout(time: 15, unit: 'MINUTES')}
+      options {
+        timeout(time: 15, unit: 'MINUTES')
+      }
       steps {
+        sh 'mkdir build-gcc-fast'
+
         sh '''
-          export NP=`grep -c ^processor /proc/cpuinfo`
-          mkdir -p /home/dealii/build-gcc-fast
-          cd /home/dealii/build-gcc-fast
-          cmake -G "Ninja" \
-	  	-D CMAKE_CXX_FLAGS='-Werror' \
-	  	-D ASPECT_TEST_GENERATOR=Ninja \
-		-D ASPECT_USE_PETSC=OFF \
-		-D ASPECT_RUN_ALL_TESTS=ON \
-		-D ASPECT_PRECOMPILE_HEADERS=ON \
-		$WORKSPACE/
-          ninja -j $NP
+          cd build-gcc-fast
+          cmake \
+            -G "Ninja" \
+            -D CMAKE_CXX_FLAGS='-Werror' \
+            -D ASPECT_TEST_GENERATOR='Ninja' \
+            -D ASPECT_USE_PETSC='OFF' \
+            -D ASPECT_RUN_ALL_TESTS='ON' \
+            -D ASPECT_PRECOMPILE_HEADERS='ON' \
+            "${WORKSPACE}"
+          '''
+
+        sh '''
+          cd build-gcc-fast
+          ninja
         '''
-      } 
+      }
     }
 
-    stage('Prebuild tests') {
-      options {timeout(time: 90, unit: 'MINUTES')}
+    stage('Test') {
+      options {
+        timeout(time: 90, unit: 'MINUTES')
+      }
       steps {
         sh '''
+          # This export avoids a warning about
+          # a discovered, but unconnected infiniband network.
           export OMPI_MCA_btl=self,tcp
-          cd /home/dealii/build-gcc-fast/tests
-          echo "Prebuilding tests..."
-	  ninja -k 0 tests || true
-	  '''
-	  }
-    }
 
-    stage('Run tests') {
-      options {timeout(time: 90, unit: 'MINUTES')}
-      steps {
+          cd build-gcc-fast/tests
+
+          # Let ninja prebuild the test libraries and run
+          # the tests to create the output files in parallel. We
+          # want this to always succeed, because it does not generate
+          # useful output (we do this further down using 'ctest', however
+          # ctest can not run ninja in parallel, so this is the
+          # most efficient way to build the tests).
+          ninja -k 0 tests || true
+        '''
+
+        sh '''
+          # Avoid the warning described above
+          export OMPI_MCA_btl=self,tcp
+
+          cd build-gcc-fast
+
+          # Output the test results using ctest. Since
+          # the tests were prebuild in the previous shell
+          # command, this will be fast although it is not
+          # running in parallel.
+          ctest \
+            --no-compress-output \
+            --test-action Test
+        '''
+      }
+    }
+    post {
+      always {
+        // Generate the 'Tests' output page in Jenkins
+        xunit testTimeMargin: '3000',
+          thresholdMode: 1,
+          thresholds: [failed(), skipped()],
+          tools: [CTest(pattern: 'build-gcc-fast/Testing/**/*.xml')]
+
+        // Update the reference test output with the new test results
         sh '''
           export OMPI_MCA_btl=self,tcp
-          rm -f /home/dealii/build-gcc-fast/FAILED
-          cd /home/dealii/build-gcc-fast
-          ctest --output-on-failure -j4 || { touch FAILED; }
-          echo "Generating reference output..."
+          cd build-gcc-fast
           ninja generate_reference_output
         '''
+
+        // Revert the change to the mpirun command we made above, so
+        // that the modification does not show up in the 'git diff' command
+        sh 'git checkout tests/CMakeLists.txt'
+
+        // Generate the 'Artifacts' diff-file that can be
+        // used to update the test results
         sh 'git diff tests > changes-test-results.diff'
-        archiveArtifacts artifacts: 'changes-test-results.diff', fingerprint: true
-        sh 'if [ -f /home/dealii/build-gcc-fast/FAILED ]; then exit 1; fi'
-        sh 'git diff --exit-code --name-only'
+        archiveArtifacts artifacts: 'changes-tests-results.diff', fingerprint: true
       }
     }
   }
-
-  post { cleanup { cleanWs() } }
 }
