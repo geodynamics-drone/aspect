@@ -109,7 +109,7 @@ pipeline {
           // Generate the 'Artifacts' diff-file that can be
           // used to update the test results
           sh 'git diff tests > changes-test-results.diff'
-          archiveArtifacts artifacts: 'changes-tests-results.diff', fingerprint: true
+          archiveArtifacts artifacts: 'changes-test-results.diff', fingerprint: true
         }
       }
     }
