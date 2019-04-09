@@ -124,30 +124,31 @@ pipeline {
             --test-action Test
         '''
       }
-    }
-    post {
-      always {
-        // Generate the 'Tests' output page in Jenkins
-        xunit testTimeMargin: '3000',
-          thresholdMode: 1,
-          thresholds: [failed(), skipped()],
-          tools: [CTest(pattern: 'build-gcc-fast/Testing/**/*.xml')]
 
-        // Update the reference test output with the new test results
-        sh '''
-          export OMPI_MCA_btl=self,tcp
-          cd build-gcc-fast
-          ninja generate_reference_output
-        '''
+      post {
+        always {
+          // Generate the 'Tests' output page in Jenkins
+          xunit testTimeMargin: '3000',
+            thresholdMode: 1,
+            thresholds: [failed(), skipped()],
+            tools: [CTest(pattern: 'build-gcc-fast/Testing/**/*.xml')]
 
-        // Revert the change to the mpirun command we made above, so
-        // that the modification does not show up in the 'git diff' command
-        sh 'git checkout tests/CMakeLists.txt'
+          // Update the reference test output with the new test results
+          sh '''
+            export OMPI_MCA_btl=self,tcp
+            cd build-gcc-fast
+            ninja generate_reference_output
+          '''
 
-        // Generate the 'Artifacts' diff-file that can be
-        // used to update the test results
-        sh 'git diff tests > changes-test-results.diff'
-        archiveArtifacts artifacts: 'changes-tests-results.diff', fingerprint: true
+          // Revert the change to the mpirun command we made above, so
+          // that the modification does not show up in the 'git diff' command
+          sh 'git checkout tests/CMakeLists.txt'
+
+          // Generate the 'Artifacts' diff-file that can be
+          // used to update the test results
+          sh 'git diff tests > changes-test-results.diff'
+          archiveArtifacts artifacts: 'changes-tests-results.diff', fingerprint: true
+        }
       }
     }
   }
